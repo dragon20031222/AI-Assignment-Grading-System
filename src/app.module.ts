@@ -1,26 +1,46 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UserModule } from './user/user.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 import { AuthModule } from './auth/auth.module';
+import { ClassModule } from './class/class.module';
+import { AssignmentModule } from './assignment/assignment.module';
+import { GradingModule } from './grading/grading.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
+    // 配置 ConfigModule，自动读取 .env 文件
+    ConfigModule.forRoot({
+      isGlobal: true, // 全局可用，无需在每个模块导入
+    }),
+    // 配置静态资源服务，使 /uploads/* 可以访问实际文件
+    ServeStaticModule.forRoot({
+      rootPath: join(process.cwd(), 'uploads'),
+      serveRoot: '/uploads',
+    }),
     TypeOrmModule.forRoot({
-      type: 'mysql', // 数据库类型
-      host: 'localhost', // 地址
-      port: 3306, // 端口
-      username: 'root', // 你的MySQL用户名
-      password: '1887415157Long.', // 你的MySQL密码
-      database: 'ai_check_assignment', // 数据库名（必须先手动创建）
-      autoLoadEntities: true, // 自动加载实体
-      synchronize: true, // 自动同步表结构（开发用！生产关闭）
-      logging: true, // 打印 SQL 日志
+      type: 'mysql',
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT) || 3306,
+      username: process.env.DB_USERNAME || 'root',
+      password: process.env.DB_PASSWORD || '',
+      database: process.env.DB_DATABASE || 'ai_check_assignment',
+      autoLoadEntities: true,
+      synchronize: true,
+      logging: true,
     }),
     UserModule,
     AuthModule,
+    ClassModule,
+    AssignmentModule,
+    GradingModule,
+    UploadModule,
   ],
   controllers: [AppController],
   providers: [AppService],

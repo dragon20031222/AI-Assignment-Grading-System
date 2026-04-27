@@ -21,7 +21,7 @@ export class User {
     type: 'varchar',
     length: 50,
     unique: true,
-    comment: '用户账号（唯一，用于登录）',
+    comment: '用户账号（老师的工号或者学生的学号，唯一标识，用于登录）',
   })
   username: string;
 
@@ -41,21 +41,21 @@ export class User {
   })
   role: UserRole;
 
-  @Column({
-    type: 'varchar',
-    length: 30,
-    nullable: true,
-    comment: '学生学号，仅学生角色使用',
-  })
-  student_id: string;
+  // @Column({
+  //   type: 'varchar',
+  //   length: 30,
+  //   nullable: true,
+  //   comment: '学生学号，仅学生角色使用',
+  // })
+  // student_id: string;
 
-  @Column({
-    type: 'varchar',
-    length: 30,
-    nullable: true,
-    comment: '教师工号，仅教师角色使用',
-  })
-  teacher_id: string;
+  // @Column({
+  //   type: 'varchar',
+  //   length: 30,
+  //   nullable: true,
+  //   comment: '教师工号，仅教师角色使用',
+  // })
+  // teacher_id: string;
 
   // 👇 修复：给 name 加默认值
   @Column({

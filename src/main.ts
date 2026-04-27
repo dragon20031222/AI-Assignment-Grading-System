@@ -27,6 +27,6 @@ async function bootstrap() {
     // 允许所有 CORS 请求头,允许Cookie
     credentials: true,
   });
-  await app.listen(3000);
+  await app.listen(3000, '0.0.0.0');
 }
 bootstrap();

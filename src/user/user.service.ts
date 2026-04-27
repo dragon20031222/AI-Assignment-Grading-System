@@ -25,7 +25,7 @@ export class UserService {
       where: { username: createUserDto.username },
     });
     if (existUser) {
-      throw new ConflictException('用户名已经存在');
+      throw new ConflictException('该工号/学号已经存在');
     }
 
     //密码不可以明文存储，这里要进行加密
