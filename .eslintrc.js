@@ -21,5 +21,7 @@ module.exports = {
     '@typescript-eslint/explicit-function-return-type': 'off',
     '@typescript-eslint/explicit-module-boundary-types': 'off',
     '@typescript-eslint/no-explicit-any': 'off',
+    // 加这一行，关闭 require 不允许的校验
+    '@typescript-eslint/no-var-requires': 'off',
   },
 };
