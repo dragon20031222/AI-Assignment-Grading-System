@@ -12,6 +12,7 @@ import { ClassTeacher } from './entities/class-teacher.entity';
 import { CreateClassDto } from './dto/create-class.dto';
 import { JoinClassDto } from './dto/join-class.dto';
 import { User, UserRole } from '../user/entities/user.entity';
+import { Assignment } from '../assignment/entities/assignment.entity';
 
 @Injectable()
 export class ClassService {
@@ -24,6 +25,8 @@ export class ClassService {
     private classTeacherRepository: Repository<ClassTeacher>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(Assignment)
+    private assignmentRepository: Repository<Assignment>,
   ) {}
 
   private generateInviteCode(): string {
@@ -167,6 +170,9 @@ export class ClassService {
         const studentCount = await this.classStudentRepository.count({
           where: { class_id: cs.class_info.id },
         });
+        const assignmentCount = await this.assignmentRepository.count({
+          where: { class_id: cs.class_info.id },
+        });
         return {
           id: cs.class_info.id,
           name: cs.class_info.name,
@@ -176,6 +182,7 @@ export class ClassService {
           creator: cs.class_info.creator,
           created_at: cs.class_info.created_at,
           student_count: studentCount,
+          assignment_count: assignmentCount,
           is_monitor: cs.is_monitor,
           joined_at: cs.joined_at,
         };

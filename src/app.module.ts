@@ -12,6 +12,7 @@ import { ClassModule } from './class/class.module';
 import { AssignmentModule } from './assignment/assignment.module';
 import { GradingModule } from './grading/grading.module';
 import { UploadModule } from './upload/upload.module';
+import { ScoreModule } from './score/score.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { UploadModule } from './upload/upload.module';
     AssignmentModule,
     GradingModule,
     UploadModule,
+    ScoreModule,
   ],
   controllers: [AppController],
   providers: [AppService],
@@ -50,3 +52,4 @@ export class AppModule implements NestModule {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }
 }
+
