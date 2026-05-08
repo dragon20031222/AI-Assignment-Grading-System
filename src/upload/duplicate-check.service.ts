@@ -300,4 +300,173 @@ export class DuplicateCheckService {
     const lower = str.toLowerCase();
     return imageExtensions.some((ext) => lower.endsWith(ext));
   }
+
+  /**
+   * 对作业的所有提交进行全量查重
+   *
+   * 与 checkDuplicate（单条查重）不同，本方法会在所有提交之间进行两两比对，
+   * 确保每个学生面对的对比数据量一致，结果公平。
+   *
+   * 适用场景：
+   * 1. 教师手动触发查重
+   * 2. 截止时间到达后自动查重
+   *
+   * @param assignmentId - 作业ID
+   * @returns 每个提交记录的查重结果，key为submitId
+   *
+   * 返回格式：
+   * Map<submitId, {
+   *   isDuplicate: boolean,
+   *   duplicates: [{
+   *     questionId: string,
+   *     submittedImage: string,
+   *     similarImage: string,
+   *     similarity: number,
+   *     hammingDistance: number,
+   *     similarSubmitId: number,
+   *     similarStudentId: number
+   *   }]
+   * }>
+   */
+  async checkAllDuplicatesForAssignment(
+    assignmentId: number,
+  ): Promise<Map<number, { isDuplicate: boolean; duplicates: any[] }>> {
+    const results = new Map<
+      number,
+      { isDuplicate: boolean; duplicates: any[] }
+    >();
+
+    // 获取该作业的所有提交
+    const allSubmits = await this.submitRepository.find({
+      where: { assignment_id: assignmentId },
+    });
+
+    // 少于2个提交无需查重
+    if (allSubmits.length < 2) {
+      // 为每个提交初始化空结果
+      for (const submit of allSubmits) {
+        results.set(submit.id, { isDuplicate: false, duplicates: [] });
+      }
+      return results;
+    }
+
+    // 为每个提交初始化空结果
+    for (const submit of allSubmits) {
+      results.set(submit.id, { isDuplicate: false, duplicates: [] });
+    }
+
+    // 预先提取所有提交中的图片，并计算哈希值缓存
+    // 结构：submitId -> { questionId -> hash }
+    const hashCache = new Map<number, Map<string, string>>();
+
+    for (const submit of allSubmits) {
+      const answers = submit.answers as Record<string, any>;
+      const images = this.extractImagesFromAnswers(answers);
+      const submitHashes = new Map<string, string>();
+
+      for (const { questionId, imagePath } of images) {
+        try {
+          // 将URL路径转换为实际文件路径
+          const actualPath = this.urlToFilePath(imagePath);
+          const hash = await this.getImageHash(actualPath);
+          submitHashes.set(imagePath, hash);
+        } catch (error) {
+          console.error(`计算图片哈希失败: ${imagePath}`, error);
+        }
+      }
+
+      hashCache.set(submit.id, submitHashes);
+    }
+
+    // 两两比对所有提交
+    for (let i = 0; i < allSubmits.length; i++) {
+      for (let j = i + 1; j < allSubmits.length; j++) {
+        const submitA = allSubmits[i];
+        const submitB = allSubmits[j];
+        const hashesA = hashCache.get(submitA.id);
+        const hashesB = hashCache.get(submitB.id);
+
+        if (!hashesA || !hashesB) continue;
+
+        // 比较 submitA 和 submitB 的每张图片
+        for (const [pathA, hashA] of hashesA) {
+          for (const [pathB, hashB] of hashesB) {
+            try {
+              const hammingDistance = this.calculateSimilarity(hashA, hashB);
+              const similarity = this.getSimilarityPercent(hashA, hashB);
+
+              // 汉明距离 <= 10 视为重复
+              if (hammingDistance <= 10) {
+                // 为 submitA 添加查重记录
+                const resultA = results.get(submitA.id);
+                if (resultA) {
+                  resultA.isDuplicate = true;
+                  resultA.duplicates.push({
+                    questionId: this.findQuestionIdForImage(
+                      submitA.answers as Record<string, any>,
+                      pathA,
+                    ),
+                    submittedImage: pathA,
+                    similarImage: pathB,
+                    similarity,
+                    hammingDistance,
+                    similarSubmitId: submitB.id,
+                    similarStudentId: submitB.student_id,
+                  });
+                }
+
+                // 为 submitB 添加查重记录
+                const resultB = results.get(submitB.id);
+                if (resultB) {
+                  resultB.isDuplicate = true;
+                  resultB.duplicates.push({
+                    questionId: this.findQuestionIdForImage(
+                      submitB.answers as Record<string, any>,
+                      pathB,
+                    ),
+                    submittedImage: pathB,
+                    similarImage: pathA,
+                    similarity,
+                    hammingDistance,
+                    similarSubmitId: submitA.id,
+                    similarStudentId: submitA.student_id,
+                  });
+                }
+              }
+            } catch (error) {
+              console.error(`比较图片失败: ${pathA} vs ${pathB}`, error);
+            }
+          }
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * 根据图片路径在答案中查找对应的题目ID
+   *
+   * @param answers - 答案对象
+   * @param imagePath - 图片路径
+   * @returns 题目ID，如果找不到则返回 'unknown'
+   */
+  private findQuestionIdForImage(
+    answers: Record<string, any>,
+    imagePath: string,
+  ): string {
+    for (const [questionId, answer] of Object.entries(answers)) {
+      if (typeof answer === 'string' && answer === imagePath) {
+        return questionId;
+      }
+      if (Array.isArray(answer)) {
+        for (const item of answer) {
+          if (typeof item === 'string' && item === imagePath) {
+            return questionId;
+          }
+        }
+      }
+    }
+    return 'unknown';
+  }
 }

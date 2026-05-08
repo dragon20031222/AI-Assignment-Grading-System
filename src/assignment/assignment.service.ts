@@ -214,11 +214,15 @@ export class AssignmentService {
       .createQueryBuilder('submit')
       .select('submit.assignment_id', 'assignment_id')
       .addSelect('COUNT(*)', 'count')
-      .where('submit.assignment_id IN (:...ids)', { ids: assignments.map((a) => a.id) })
+      .where('submit.assignment_id IN (:...ids)', {
+        ids: assignments.map((a) => a.id),
+      })
       .groupBy('submit.assignment_id')
       .getRawMany();
 
-    const submitCountMap = new Map(submitCounts.map((s) => [s.assignment_id, parseInt(s.count)]));
+    const submitCountMap = new Map(
+      submitCounts.map((s) => [s.assignment_id, parseInt(s.count)]),
+    );
     const submitMap = new Map(studentSubmits.map((s) => [s.assignment_id, s]));
 
     const now = new Date();
@@ -494,46 +498,24 @@ export class AssignmentService {
 
     const savedSubmit = await this.submitRepository.save(submit);
 
-    // 6.5 如果作业开启了查重，进行图片查重
+    // 如果作业开启了查重，提前计算图片哈希值缓存，供后续全量查重使用
+    // 注意：这里不再立即查重，而是由教师手动触发或截止时间到达后自动触发
     if (assignment.check_duplicate) {
       try {
-        // 计算提交图片的哈希值
         const imageHashes =
           await this.duplicateCheckService.calculateImageHashes(
             submitDto.answers as Record<string, any>,
           );
-        // 更新哈希值
         await this.submitRepository.update(savedSubmit.id, {
           image_hashes: imageHashes,
         });
-
-        // 与其他提交进行查重
-        const duplicateResult = await this.duplicateCheckService.checkDuplicate(
-          submitDto.assignment_id,
-          studentId,
-          submitDto.answers as Record<string, any>,
-        );
-
-        // 更新查重结果
-        await this.submitRepository.update(savedSubmit.id, {
-          duplicate_check_result: duplicateResult,
-        });
-
-        // 如果发现重复，不继续批改
-        if (duplicateResult.isDuplicate) {
-          await this.submitRepository.update(savedSubmit.id, {
-            status: SubmitStatus.FAILED,
-            comment: '作业图片与他人重复，疑似抄袭',
-          });
-          return savedSubmit;
-        }
       } catch (error) {
-        console.error('查重失败:', error);
-        // 查重失败不影响继续批改
+        console.error('计算图片哈希失败:', error);
+        // 计算失败不影响提交，后续查重时会重新计算
       }
     }
 
-    // 7. 异步调用AI批改（不等待完成）
+    // 异步调用AI批改（不等待完成）
     this.processGrading(savedSubmit.id, assignment);
 
     return savedSubmit;
@@ -693,5 +675,113 @@ export class AssignmentService {
       submitted_at: s.submitted_at,
       graded_at: s.graded_at,
     }));
+  }
+
+  /**
+   * 教师手动触发全量查重
+   *
+   * 对所有已提交的学生答案进行两两比对，得出统一的查重结果。
+   * 这样做的好处：
+   * 1. 所有学生在同一时间点进行查重，对比数据量一致
+   * 2. 教师可以根据查重结果判断是否存在抄袭
+   * 3. 避免“先提交的人查重数据少，后提交的人查重数据多”的不公平情况
+   *
+   * @param assignmentId - 作业ID
+   * @param teacherId - 触发查重的教师ID（用于权限验证）
+   * @returns 查重结果汇总
+   */
+  async runDuplicateCheck(
+    assignmentId: number,
+    teacherId: number,
+  ): Promise<{
+    assignmentId: number;
+    totalSubmits: number;
+    duplicateSubmits: number;
+    results: Array<{
+      submitId: number;
+      studentId: number;
+      isDuplicate: boolean;
+      duplicateCount: number;
+      duplicates: any[];
+    }>;
+  }> {
+    // 权限验证：必须是教师
+    const teacher = await this.userRepository.findOne({
+      where: { id: teacherId },
+    });
+
+    if (!teacher || teacher.role !== UserRole.TEACHER) {
+      throw new ForbiddenException('只有教师才能触发查重');
+    }
+
+    // 验证作业存在
+    const assignment = await this.assignmentRepository.findOne({
+      where: { id: assignmentId },
+    });
+
+    if (!assignment) {
+      throw new NotFoundException('作业不存在');
+    }
+
+    // 验证是该作业的创建者
+    if (assignment.creator_id !== teacherId) {
+      throw new ForbiddenException('你只能对自己布置的作业进行查重');
+    }
+
+    // 执行全量查重
+    const duplicateResults =
+      await this.duplicateCheckService.checkAllDuplicatesForAssignment(
+        assignmentId,
+      );
+
+    // 将查重结果写入数据库，并构建返回数据
+    let duplicateSubmits = 0;
+    const results: Array<{
+      submitId: number;
+      studentId: number;
+      isDuplicate: boolean;
+      duplicateCount: number;
+      duplicates: any[];
+    }> = [];
+
+    for (const [submitId, result] of duplicateResults) {
+      // 更新数据库中的查重结果
+      await this.submitRepository.update(submitId, {
+        duplicate_check_result: {
+          isDuplicate: result.isDuplicate,
+          duplicates: result.duplicates,
+          checkedAt: new Date(),
+        },
+      });
+
+      if (result.isDuplicate) {
+        duplicateSubmits++;
+      }
+    }
+
+    // 从数据库中获取完整的提交信息用于返回
+    const allSubmits = await this.submitRepository.find({
+      where: { assignment_id: assignmentId },
+    });
+
+    for (const submit of allSubmits) {
+      const result = duplicateResults.get(submit.id);
+      if (result) {
+        results.push({
+          submitId: submit.id,
+          studentId: submit.student_id,
+          isDuplicate: result.isDuplicate,
+          duplicateCount: result.duplicates.length,
+          duplicates: result.duplicates,
+        });
+      }
+    }
+
+    return {
+      assignmentId: assignmentId,
+      totalSubmits: allSubmits.length,
+      duplicateSubmits,
+      results,
+    };
   }
 }

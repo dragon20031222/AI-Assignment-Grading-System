@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AssignmentService } from './assignment.service';
 import { AssignmentController } from './assignment.controller';
+import { DuplicateCheckSchedulerService } from './duplicate-check-scheduler.service';
 import { Assignment } from './entities/assignment.entity';
 import { AssignmentSubmit } from './entities/assignment-submit.entity';
 import { Question } from './entities/question.entity';
@@ -21,6 +22,7 @@ import { UploadModule } from '../upload/upload.module';
  * - 作业提交与批改
  * - AI批改服务
  * - 文件上传与查重
+ * - 查重定时调度（截止时间自动查重）
  */
 @Module({
   imports: [
@@ -39,7 +41,10 @@ import { UploadModule } from '../upload/upload.module';
     UploadModule,
   ],
   controllers: [AssignmentController], // 注册控制器
-  providers: [AssignmentService], // 注册服务
+  providers: [
+    AssignmentService,
+    DuplicateCheckSchedulerService, // 定时任务：截止时间自动查重
+  ],
   exports: [AssignmentService], // 导出服务供其他模块使用
 })
 export class AssignmentModule {}

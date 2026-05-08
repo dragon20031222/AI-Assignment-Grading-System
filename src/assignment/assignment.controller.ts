@@ -131,6 +131,23 @@ export class AssignmentController {
   }
 
   /**
+   * 教师手动触发查重
+   * POST /assignment/:id/check-duplicate
+   *
+   * 教师对某个作业的所有提交进行全量查重
+   * 对所有学生的答案进行两两比对，确保查重结果公平一致
+   *
+   * @param id - 作业ID
+   */
+  @Post(':id/check-duplicate')
+  async runDuplicateCheck(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.assignmentService.runDuplicateCheck(id, user.id);
+  }
+
+  /**
    * 获取作业的提交列表
    * GET /assignment/:id/submits
    *
