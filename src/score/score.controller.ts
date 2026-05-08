@@ -4,7 +4,9 @@ import {
   Param,
   UseGuards,
   ParseIntPipe,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ScoreService } from './score.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -82,5 +84,47 @@ export class ScoreController {
   @Get('student/assignments')
   async getStudentGrades(@CurrentUser() user: any) {
     return this.scoreService.getStudentGrades(user.id);
+  }
+
+  /**
+   * 导出作业成绩为 Excel 文件
+   * GET /score/assignment/:id/export
+   *
+   * 教师点击导出按钮后，浏览器自动下载一个 .xlsx 文件，
+   * 包含该作业所有学生的成绩详情和班级统计汇总。
+   *
+   * @param id - 作业ID
+   * @param user - 当前登录用户（从 JWT 解析）
+   * @param res - Express Response 对象，用于直接写入文件流
+   *
+   * 实现说明：
+   * - 使用 @Res() 手动控制响应，绕过全局 ResponseInterceptor（因为二进制流不需要 JSON 包装）
+   * - Content-Type 设为 Excel 的 MIME 类型，浏览器识别后自动触发下载
+   * - Content-Disposition 中的 filename 支持中文（URL 编码），确保文件名不乱码
+   */
+  @Get('assignment/:id/export')
+  async exportAssignmentGrades(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } =
+      await this.scoreService.exportAssignmentGradesToExcel(id, user.id);
+
+    // 设置响应头，告诉浏览器这是一个需要下载的 Excel 文件
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    // RFC 5987: filename* 支持 UTF-8 编码，解决中文文件名乱码问题
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    // 文件大小，方便浏览器显示下载进度
+    res.setHeader('Content-Length', buffer.length);
+
+    // 将 Excel 二进制数据写入响应流
+    res.send(buffer);
   }
 }

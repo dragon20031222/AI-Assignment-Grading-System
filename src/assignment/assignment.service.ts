@@ -432,8 +432,8 @@ export class AssignmentService {
    * 2. 验证作业存在
    * 3. 验证作业未截止
    * 4. 验证学生在该班級中
-   * 5. 验证未提交过（防止重复提交）
-   * 6. 保存提交记录
+   * 5. 验证未重复提交（如之前批改失败，允许覆盖旧记录重新提交）
+   * 6. 保存提交记录（含图片哈希预计算）
    * 7. 异步调用AI批改
    */
   async submitAssignment(
@@ -476,7 +476,7 @@ export class AssignmentService {
       throw new ForbiddenException('你不在这个班级中，无法提交作业');
     }
 
-    // 5. 验证未提交过
+    // 5. 验证未重复提交（如果之前提交失败，允许重新提交）
     const existingSubmit = await this.submitRepository.findOne({
       where: {
         assignment_id: submitDto.assignment_id,
@@ -484,8 +484,46 @@ export class AssignmentService {
       },
     });
 
+    // 存在旧提交记录时，根据状态决定是否允许重新提交
     if (existingSubmit) {
-      throw new BadRequestException('你已经提交过这个作业了');
+      // 批改已完成、批改中、待批改 → 不允许重新提交
+      if (existingSubmit.status !== SubmitStatus.FAILED) {
+        throw new BadRequestException('你已经提交过这个作业了');
+      }
+
+      // 之前的提交失败了（如AI无法访问图片URL），允许重新提交
+      // 重置状态并更新答案，覆盖旧记录
+      await this.submitRepository.update(existingSubmit.id, {
+        answers: submitDto.answers,
+        status: SubmitStatus.PENDING, // 重置为待批改
+        score: null,
+        comment: null,
+        ai_result: null,
+        duplicate_check_result: null, // 清空旧查重结果
+      });
+
+      // 如果作业开启了查重，重新计算图片哈希
+      if (assignment.check_duplicate) {
+        try {
+          const imageHashes =
+            await this.duplicateCheckService.calculateImageHashes(
+              submitDto.answers as Record<string, any>,
+            );
+          await this.submitRepository.update(existingSubmit.id, {
+            image_hashes: imageHashes,
+          });
+        } catch (error) {
+          console.error('计算图片哈希失败:', error);
+        }
+      }
+
+      // 重新触发AI批改
+      this.processGrading(existingSubmit.id, assignment);
+
+      // 返回更新后的提交记录（重新从数据库获取最新状态）
+      return await this.submitRepository.findOne({
+        where: { id: existingSubmit.id },
+      });
     }
 
     // 6. 保存提交记录
