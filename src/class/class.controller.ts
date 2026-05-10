@@ -84,4 +84,25 @@ export class ClassController {
   ) {
     return this.classService.setMonitor(classId, studentId, user.id);
   }
+
+  /**
+   * 删除班级（级联删除所有关联数据）
+   * DELETE /class/:id
+   *
+   * 只有创建班级的教师才能删除。
+   * 删除时会级联清理：
+   * - 所有作业的提交记录
+   * - 所有作业的题目
+   * - 所有作业
+   * - 所有学生/教师关系
+   *
+   * ⚠️ 此操作不可逆！删除后数据无法恢复
+   */
+  @Delete(':id')
+  async deleteClass(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.classService.deleteClass(id, user.id);
+  }
 }

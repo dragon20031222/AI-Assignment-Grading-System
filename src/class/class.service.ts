@@ -5,7 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { ClassInfo } from './entities/class-info.entity';
 import { ClassStudent } from './entities/class-student.entity';
 import { ClassTeacher } from './entities/class-teacher.entity';
@@ -13,6 +13,8 @@ import { CreateClassDto } from './dto/create-class.dto';
 import { JoinClassDto } from './dto/join-class.dto';
 import { User, UserRole } from '../user/entities/user.entity';
 import { Assignment } from '../assignment/entities/assignment.entity';
+import { AssignmentSubmit } from '../assignment/entities/assignment-submit.entity';
+import { Question } from '../assignment/entities/question.entity';
 
 @Injectable()
 export class ClassService {
@@ -27,6 +29,10 @@ export class ClassService {
     private userRepository: Repository<User>,
     @InjectRepository(Assignment)
     private assignmentRepository: Repository<Assignment>,
+    @InjectRepository(AssignmentSubmit)
+    private submitRepository: Repository<AssignmentSubmit>,
+    @InjectRepository(Question)
+    private questionRepository: Repository<Question>,
   ) {}
 
   private generateInviteCode(): string {
@@ -266,5 +272,97 @@ export class ClassService {
 
     membership.is_monitor = true;
     return this.classStudentRepository.save(membership);
+  }
+
+  /**
+   * 删除班级（级联删除所有关联数据）
+   *
+   * 只有班级的创建者（教师）才能删除班级。
+   * 删除时会级联清理以下数据：
+   * - 该班级下所有作业的提交记录
+   * - 该班级下所有作业的题目
+   * - 该班级下的所有作业
+   * - 班级-学生关联关系
+   * - 班级-教师关联关系
+   * - 班级本身
+   *
+   * 级联删除顺序遵循外键约束原则：先删子表，再删父表
+   *
+   * @param classId - 班级ID
+   * @param operatorId - 操作者ID（当前登录用户的ID）
+   *
+   * 设计思路（级联删除为什么不用 cascade？）：
+   * 1. TypeORM 的 cascade: true 只在调用 .remove() 时生效，且需要先加载所有关联实体到内存
+   * 2. 对于批量数据（如一个班级可能有数百条提交），加载到内存效率低
+   * 3. 使用 Repository.delete() 直接发 DELETE SQL，性能更好，原子性由数据库事务保证
+   */
+  async deleteClass(
+    classId: number,
+    operatorId: number,
+  ): Promise<{ message: string }> {
+    // 1. 权限验证：只有创建班级的教师才能删除
+    const operator = await this.userRepository.findOne({
+      where: { id: operatorId },
+    });
+
+    if (!operator || operator.role !== UserRole.TEACHER) {
+      throw new ForbiddenException('只有教师才能删除班级');
+    }
+
+    // 2. 验证班级存在
+    const classInfo = await this.classInfoRepository.findOne({
+      where: { id: classId },
+    });
+
+    if (!classInfo) {
+      throw new NotFoundException('班级不存在');
+    }
+
+    // 3. 只允许创建者删除
+    if (classInfo.creator_id !== operatorId) {
+      throw new ForbiddenException('只有班级创建者才能删除班级');
+    }
+
+    // 4. 查找该班级下的所有作业ID
+    const assignments = await this.assignmentRepository.find({
+      where: { class_id: classId },
+      select: ['id'],
+    });
+    const assignmentIds = assignments.map((a) => a.id);
+
+    /*
+     * 5. 级联删除（从子到父的顺序）
+     *
+     * 删除顺序很重要：
+     * assignment_submit → question → assignment → class_student → class_teacher → class_info
+     *
+     * 原因：外键约束决定了必须先删除引用方（子表），再删除被引用方（父表）
+     */
+    if (assignmentIds.length > 0) {
+      // 5a. 删除所有提交记录 (assignment_submit)
+      await this.submitRepository.delete({
+        assignment_id: In(assignmentIds),
+      });
+
+      // 5b. 删除所有题目 (question)
+      await this.questionRepository.delete({
+        assignment_id: In(assignmentIds),
+      });
+    }
+
+    // 5c. 删除所有作业 (assignment)
+    // 用 class_id 直接批量删除，比逐条删除更高效
+    await this.assignmentRepository.delete({ class_id: classId });
+
+    // 5d. 删除班级-学生关联 (class_student)
+    await this.classStudentRepository.delete({ class_id: classId });
+
+    // 5e. 删除班级-教师关联 (class_teacher)
+    await this.classTeacherRepository.delete({ class_id: classId });
+
+    // 5f. 删除班级本身 (class_info)
+    await this.classInfoRepository.delete(classId);
+
+    return { message: `班级"${classInfo.name}"已成功删除` };
   }
 }
