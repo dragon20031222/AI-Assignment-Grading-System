@@ -149,6 +149,9 @@ export class ClassService {
         const studentCount = await this.classStudentRepository.count({
           where: { class_id: ct.class_info.id },
         });
+        const assignmentCount = await this.assignmentRepository.count({
+          where: { class_id: ct.class_info.id },
+        });
         return {
           id: ct.class_info.id,
           name: ct.class_info.name,
@@ -158,6 +161,7 @@ export class ClassService {
           creator: ct.class_info.creator,
           created_at: ct.class_info.created_at,
           student_count: studentCount,
+          assignment_count: assignmentCount,
         };
       }),
     );
@@ -211,6 +215,91 @@ export class ClassService {
       relations: ['teacher'],
     });
   }
+
+  /**
+   * 教师获取班级详情（含学生列表）
+   *
+   * 返回完整的班级信息，包括：
+   * - 班级基本信息（名称、描述、邀请码、创建者等）
+   * - 统计数据（学生人数、作业数量）
+   * - 学生列表（学号、姓名、邮箱、是否班长、加入时间）
+   *
+   * @param classId - 班级ID
+   * @param teacherId - 教师ID（用于权限验证）
+   */
+  async getClassDetailForTeacher(
+    classId: number,
+    teacherId: number,
+  ): Promise<any> {
+    // 1. 验证教师身份
+    const teacher = await this.userRepository.findOne({
+      where: { id: teacherId },
+    });
+
+    if (!teacher || teacher.role !== UserRole.TEACHER) {
+      throw new ForbiddenException('只有教师才能查看班级详情');
+    }
+
+    // 2. 获取班级基本信息
+    const classInfo = await this.classInfoRepository.findOne({
+      where: { id: classId },
+      relations: ['creator'],
+    });
+
+    if (!classInfo) {
+      throw new NotFoundException('班级不存在');
+    }
+
+    // 3. 验证教师是否属于该班级
+    const teacherInClass = await this.classTeacherRepository.findOne({
+      where: { class_id: classId, teacher_id: teacherId },
+    });
+
+    if (!teacherInClass) {
+      throw new ForbiddenException('你不是该班级的教师，无权查看');
+    }
+
+    // 4. 获取学生列表
+    const classStudents = await this.classStudentRepository.find({
+      where: { class_id: classId },
+      relations: ['student'],
+      order: { joined_at: 'ASC' },
+    });
+
+    // 5. 统计作业数量
+    const assignmentCount = await this.assignmentRepository.count({
+      where: { class_id: classId },
+    });
+
+    // 6. 格式化学生列表
+    const students = classStudents.map((cs) => ({
+      id: cs.id,
+      student_id: cs.student_id,
+      username: cs.student?.username || '',
+      name: cs.student?.name || '',
+      email: cs.student?.email || '',
+      is_monitor: cs.is_monitor,
+      joined_at: cs.joined_at,
+    }));
+
+    // 7. 返回完整信息
+    return {
+      id: classInfo.id,
+      name: classInfo.name,
+      description: classInfo.description,
+      invite_code: classInfo.invite_code,
+      creator: {
+        id: classInfo.creator?.id,
+        username: classInfo.creator?.username,
+        name: classInfo.creator?.name,
+      },
+      created_at: classInfo.created_at,
+      student_count: classStudents.length,
+      assignment_count: assignmentCount,
+      students,
+    };
+  }
+
   // 移除班级的学生
   async removeStudent(
     classId: number,

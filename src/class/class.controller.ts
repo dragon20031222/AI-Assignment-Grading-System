@@ -35,6 +35,26 @@ export class ClassController {
   ) {
     return this.classService.joinClass(joinClassDto, user.id);
   }
+
+  /**
+   * 教师获取班级详情（含学生列表）
+   * GET /class/:id/detail
+   *
+   * 返回班级完整信息：
+   * - 班级基本信息（名称、描述、邀请码、创建者）
+   * - 统计数据（学生人数、作业数量）
+   * - 学生列表（学号、姓名、邮箱、是否班长、加入时间）
+   *
+   * 只有该班级的教师才能查看
+   */
+  @Get(':id/detail')
+  async getClassDetailForTeacher(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
+  ) {
+    return this.classService.getClassDetailForTeacher(id, user.id);
+  }
+
   // 获取班级详情
   // 只有班级的教师才能获取班级详情
   // 只有班级的学生才能获取班级详情
